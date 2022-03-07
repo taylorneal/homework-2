@@ -1,11 +1,25 @@
 library(tidyverse)
 library(rsample)
 library(modelr)
+library(glmnet)
+library(lubridate)
+library(ROCR)
 
 ###
 ### Problem 1 ###
 ###
+capmetro <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/capmetro_UT.csv", header = TRUE)
 
+capmetro = capmetro %>%
+  mutate(day_of_week = factor(day_of_week, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")), month = factor(month, levels = c("Sep", "Oct", "Nov")))
+
+capmetro_hourly = capmetro %>% 
+  group_by(hour_of_day, day_of_week, month) %>%
+  summarise(mean_boarding = mean(boarding, na.rm=T), .groups = "drop")
+
+ggplot(capmetro_hourly) + geom_line(aes(x = hour_of_day, y = mean_boarding, color = month)) + facet_wrap(~day_of_week) + labs(x = "Hour of Day", y = "Mean Number of Boardings", color = "Month") + theme_minimal() + ggtitle("Mean Hourly Capital Metro Boardings (to, from, and around UT)")
+
+ggplot(capmetro) + geom_point(aes(x = temperature, y = boarding, color = weekend)) + facet_wrap(~hour_of_day) + labs(x = "Temperature (degrees F)", y = "Boardings", color = "Weekend / Weekday") + theme_minimal() + ggtitle("Boardings vs Temperature, Faceted by Hour of the Day")
 
 ###
 ### Problem 2 ###
@@ -56,14 +70,44 @@ baseline_1 = lm(children ~ market_segment + adults + customer_type + is_repeated
 baseline_2 = lm(children ~ . - arrival_date, data = hotels_dev_train)
 
 # proposed linear model
-hotels_dev_train = hotels_dev_train %>% mutate(two_adults = adults == 2)
-hotels_dev_test = hotels_dev_test %>% mutate(two_adults = adults == 2)
+hotels_dev_train = hotels_dev_train %>% 
+  mutate(two_adults = adults == 2,month_arrive = as.factor(month(as.Date(arrival_date))))
+hotels_dev_test = hotels_dev_test %>% 
+  mutate(two_adults = adults == 2, month_arrive = as.factor(month(as.Date(arrival_date))))
 
-my_model_start = lm(children ~ . - arrival_date - assigned_room_type, data = hotels_dev_train)
 
-lm_step = step(my_model_start, scope = ~ (.)^2)
+#my_model_start = lm(children ~ . - arrival_date - assigned_room_type - deposit_type - previous_cancellations, data = hotels_dev_train)
+#drop1(my_model_start)
 
-# compare to baseline
-rmse(baseline_1, hotels_dev_test)
-rmse(baseline_2, hotels_dev_test)
-rmse(my_model, hotels_dev_test)
+hcx = model.matrix(children ~ (. - 1 - assigned_room_type - arrival_date)^2, data = hotels_dev_train)
+hcy = hotels_dev_train$children
+# remove - deposit_type, previous_cancellations
+
+
+hclasso = glmnet(hcx, hcy, family = "binomial")
+plot(hclasso)
+plot(hclasso$lambda, AICc(hclasso))
+plot(log(hclasso$lambda), AICc(hclasso))
+sum(coef(hclasso)!=0)
+#coef(hclasso)[coef(hclasso) != 0,]
+
+#lm_step = step(my_model_start, scope = ~(.)^2)
+# add hotel*reserved_room_type + two_adults*reserved_room_type + market_segment*reserved_room_type + reserved_room_type*month_arrive + adults*reserved_room_type + hotel*month_arrive + average_daily_rate*month_arrive
+
+#my_model = lm(children ~ . - arrival_date - assigned_room_type - deposit_type - previous_cancellations + hotel*reserved_room_type + two_adults*reserved_room_type + market_segment*reserved_room_type + reserved_room_type*month_arrive, data = hotels_dev_train)
+#drop1(my_model_start)?
+
+pred_base1 <- predict(baseline_1, hotels_dev_test, type="response")
+pred_base1 <- prediction(pred_base1, hotels_dev_test$children)
+perf_base1 <- performance(pred_base1, "rmse")
+rmse_base1 = slot(perf_base1, "y.values")
+
+pred_base2 <- predict(baseline_2, hotels_dev_test, type="response")
+pred_base2 <- prediction(pred_base2, hotels_dev_test$children)
+perf_base2 <- performance(pred_base2, "rmse")
+rmse_base2 = slot(perf_base2, "y.values")
+
+pred_hclasso <- predict(hclasso, hotels_dev_test, type = "response")
+pred_hclasso <- prediction(pred_hclasso, hotels_dev_test$children)
+perf_hclasso <- performance(pred_hclasso, "rmse")
+rmse_hclasso = slot(perf_hclasso, "y.values")
