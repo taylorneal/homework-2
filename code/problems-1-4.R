@@ -1,7 +1,7 @@
 library(tidyverse)
 library(rsample)
 library(modelr)
-library(glmnet)
+library(gamlr)
 library(lubridate)
 library(ROCR)
 library(mosaic)
@@ -93,14 +93,73 @@ confusion_out_logit
 hotels_dev <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/hotels_dev.csv", header = TRUE)
 hotels_val <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/hotels_val.csv", header = TRUE)
 
+
+folds <- 5
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+baseline_1 <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  baseline_1_model <- glm(children ~ market_segment + adults + customer_type +
+                            is_repeated_guest, family = "binomial", 
+                          data = train_)
+  pred <- predict(baseline_1_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+baseline_2 <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  baseline_2_model <- glm(children ~ . - arrival_date, family = "binomial", 
+                          data = train_)
+  pred <- predict(baseline_2_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+hotels_dev = hotels_dev %>% 
+  mutate(two_adults = adults == 2,month_arrive = as.factor(month(as.Date(arrival_date))))
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+my_attempt <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  my_model <- glm(children ~ . - arrival_date - deposit_type -
+                    previous_cancellations + two_adults:reserved_room_type,
+                  family = "binomial", 
+                          data = train_)
+  pred <- predict(my_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+pred <- predict(my_model, newdata = hotels_val, type = "response")
+pred <- prediction(pred, hotels_dev$children)
+ROC <- performance(pred, "tpr", "fpr")
+plot(ROC)
+
+
+
+
+
+
+
+
+
+
 # train / test split
 hotels_dev_split =  initial_split(hotels_dev, prop = 0.8)
 hotels_dev_train = training(hotels_dev_split)
 hotels_dev_test  = testing(hotels_dev_split)
 
 # establish baseline models
-baseline_1 = lm(children ~ market_segment + adults + customer_type + is_repeated_guest, data = hotels_dev_train)
-baseline_2 = lm(children ~ . - arrival_date, data = hotels_dev_train)
+baseline_1 = glm(children ~ market_segment + adults + customer_type + is_repeated_guest, data = hotels_dev_train, family = "binomial")
+baseline_2 = glm(children ~ . - arrival_date, data = hotels_dev_train, family = "binomial")
 
 # proposed linear model
 hotels_dev_train = hotels_dev_train %>% 
@@ -109,19 +168,19 @@ hotels_dev_test = hotels_dev_test %>%
   mutate(two_adults = adults == 2, month_arrive = as.factor(month(as.Date(arrival_date))))
 
 
-#my_model_start = lm(children ~ . - arrival_date - assigned_room_type - deposit_type - previous_cancellations, data = hotels_dev_train)
+my_model_start = glm(children ~ . - arrival_date - deposit_type - previous_cancellations + two_adults:reserved_room_type, data = hotels_dev_train, family = "binomial")
 #drop1(my_model_start)
 
-hcx = model.matrix(children ~ (. - 1 - assigned_room_type - arrival_date)^2, data = hotels_dev_train)
-hcy = hotels_dev_train$children
+#hcx = model.matrix(children ~ (. - 1 - assigned_room_type - arrival_date)^2, data = hotels_dev_train)
+#hcy = hotels_dev_train$children
 # remove - deposit_type, previous_cancellations
 
 
-hclasso = glmnet(hcx, hcy, family = "binomial")
-plot(hclasso)
-plot(hclasso$lambda, AICc(hclasso))
-plot(log(hclasso$lambda), AICc(hclasso))
-sum(coef(hclasso)!=0)
+#hclasso = gamlr(hcx, hcy, family = "binomial")
+#plot(hclasso)
+#plot(hclasso$lambda, AICc(hclasso))
+#plot(log(hclasso$lambda), AICc(hclasso))
+#sum(coef(hclasso)!=0)
 #coef(hclasso)[coef(hclasso) != 0,]
 
 #lm_step = step(my_model_start, scope = ~(.)^2)
@@ -140,7 +199,7 @@ pred_base2 <- prediction(pred_base2, hotels_dev_test$children)
 perf_base2 <- performance(pred_base2, "rmse")
 rmse_base2 = slot(perf_base2, "y.values")
 
-pred_hclasso <- predict(hclasso, hotels_dev_test, type = "response")
+pred_hclasso <- predict(my_model_start, hotels_dev_test, type = "response")
 pred_hclasso <- prediction(pred_hclasso, hotels_dev_test$children)
 perf_hclasso <- performance(pred_hclasso, "rmse")
 rmse_hclasso = slot(perf_hclasso, "y.values")

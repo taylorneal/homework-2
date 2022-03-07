@@ -18,6 +18,8 @@ library(knitr)
 
 capmetro <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/capmetro_UT.csv", header = TRUE)
 credit <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/german_credit.csv", header = TRUE)
+hotels_dev <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/hotels_dev.csv", header = TRUE)
+hotels_val <- read.csv("https://raw.githubusercontent.com/taylorneal/homework-2/master/data/hotels_val.csv", header = TRUE)
 
 set.seed(9)
 ```
@@ -124,4 +126,82 @@ The coefficients obtained in the table above from fitting a simple logistic regr
 
 ## 4) Children and Hotel Reservations
 
-TBU
+For this modeling problem we added two engineered features (a dummy variable for two adults and arrival month as a factor). Utilizing these additional variables along with an interaction term between reserved_room_type and the two adults dummy, we were able to gain performance on both baselines in terms of RMSE and the area under the ROC curve. Please see model verification steps below (utilizing data that was completely held out of the fitting and testing phases).
+
+```{r ROC-curve, echo = FALSE}
+
+folds <- 5
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+baseline_1 <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  baseline_1_model <- glm(children ~ market_segment + adults + customer_type +
+                            is_repeated_guest, family = "binomial", 
+                          data = train_)
+  pred <- predict(baseline_1_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+baseline_2 <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  baseline_2_model <- glm(children ~ . - arrival_date, family = "binomial", 
+                          data = train_)
+  pred <- predict(baseline_2_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+hotels_dev = hotels_dev %>% 
+  mutate(two_adults = adults == 2,month_arrive = as.factor(month(as.Date(arrival_date))))
+hotels_val = hotels_val %>% 
+  mutate(two_adults = adults == 2,month_arrive = as.factor(month(as.Date(arrival_date))))
+
+fold_id <- rep(1:folds, length = nrow(hotels_dev)) %>% sample
+my_attempt <- foreach(fold = 1:5, .combine = "c") %do% {
+  train_ <- hotels_dev[fold_id!=fold,]
+  test_ <- hotels_dev[fold_id==fold,]
+  my_model <- glm(children ~ . - arrival_date - deposit_type -
+                    previous_cancellations + two_adults:reserved_room_type,
+                  family = "binomial", 
+                          data = train_)
+  pred <- predict(my_model, test_, type="response")
+  pred <- prediction(pred, test_$children)
+  perf <- performance(pred, "auc")
+  perf@y.values[[1]]
+} %>% mean()
+
+pred <- predict(my_model, newdata = hotels_val, type = "response")
+pred <- prediction(pred, hotels_val$children)
+ROC <- performance(pred, "tpr", "fpr")
+plot(ROC, print.auc = TRUE)
+
+```
+
+The plot above shows the ROC for our final model with predictions compared to the validation set of data which was held out of this analysis until this step.
+
+```{r val-accuracy, echo = FALSE}
+folds = 20
+fold_id = rep(1:folds, length = nrow(hotels_val$children)) %>% sample
+accuracy <- foreach(fold = 1:20, .combine = "c") %do% {
+  val_step <- hotels_val[fold_id == fold,]
+  children <- hotels_val$children[fold_id == fold]
+  
+  pred <- predict(my_model, newdata = val_step, type = "response")
+  
+  pred <- data.frame(y = children, y_pred = if_else(pred > 0.5, 1, 0))
+  
+  (xtabs(~ ., pred) %>% diag() %>% sum()) / nrow(pred)
+  
+}
+table_ = data.frame(Trial = rep(1:20), Accuracy = accuracy %>% round(4)*100)
+   
+kable(table_)
+
+```
+As seen in the table above, the model does a decent job at predicting the number of children with most accuracy rates over 90%.

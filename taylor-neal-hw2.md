@@ -137,4 +137,42 @@ represented.
 
 ## 4) Children and Hotel Reservations
 
-TBU
+For this modeling problem we added two engineered features (a dummy
+variable for two adults and arrival month as a factor). Utilizing these
+additional variables along with an interaction term between
+reserved_room_type and the two adults dummy, we were able to gain
+performance on both baselines in terms of RMSE and the area under the
+ROC curve. Please see model verification steps below (utilizing data
+that was completely held out of the fitting and testing phases).
+
+![](taylor-neal-hw2_files/figure-gfm/ROC-curve-1.png)<!-- -->
+
+The plot above shows the ROC for our final model with predictions
+compared to the validation set of data which was held out of this
+analysis until this step.
+
+| Trial | Accuracy |
+|------:|---------:|
+|     1 |    94.00 |
+|     2 |    93.60 |
+|     3 |    94.00 |
+|     4 |    95.60 |
+|     5 |    95.18 |
+|     6 |    94.80 |
+|     7 |    96.00 |
+|     8 |    92.40 |
+|     9 |    95.20 |
+|    10 |    95.60 |
+|    11 |    94.00 |
+|    12 |    95.20 |
+|    13 |    95.20 |
+|    14 |    94.00 |
+|    15 |    93.20 |
+|    16 |    94.00 |
+|    17 |    96.40 |
+|    18 |    88.80 |
+|    19 |    94.80 |
+|    20 |    92.00 |
+
+As seen in the table above, the model does a decent job at predicting
+the number of children with most accuracy rates over 90%.
