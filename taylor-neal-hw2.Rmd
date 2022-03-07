@@ -1,5 +1,5 @@
 ---
-title: "ECO 395 Homework 1: Taylor Neal"
+title: "ECO 395 Homework 2: Taylor Neal"
 output: rmarkdown::github_document
 ---
 
