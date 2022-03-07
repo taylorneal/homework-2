@@ -1,0 +1,253 @@
+---
+title: "ECO 395 Homework 1: Taylor Neal"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(rsample)
+library(caret)
+library(modelr)
+library(parallel)
+library(foreach)
+library(knitr)
+
+ABIA <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/ABIA.csv", header=TRUE)
+BBTOP100 <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/billboard.csv", header=TRUE)
+OLYMPICS <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/olympics_top20.csv", header=TRUE)
+SCLASS <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/sclass.csv", header=TRUE)
+```
+## 1) Data visualization: flights at ABIA
+
+
+```{r aus-delays, echo = FALSE, fig.show="hold", out.width="50%"}
+
+ABIA_edit <- ABIA %>% filter(Origin == 'AUS')
+
+ABIA_edit = ABIA_edit %>%
+  mutate(small_delay = DepDelay >5,
+         big_delay = DepDelay > 30)
+
+by_carrier_day = ABIA_edit %>% 
+  group_by(UniqueCarrier,DayOfWeek) %>% 
+  summarize(count = n(),
+            small_delay = mean(small_delay, na.rm=TRUE),
+            big_delay = mean(big_delay, na.rm=TRUE))
+
+by_carrier_day <- by_carrier_day %>% 
+filter(UniqueCarrier == "CO" | UniqueCarrier == 
+         "AA" | UniqueCarrier == "WN")
+by_carrier_day$UniqueCarrier[by_carrier_day$UniqueCarrier=="AA"] = "American Airlines"
+by_carrier_day$UniqueCarrier[by_carrier_day$UniqueCarrier=="CO"] = "Continental"
+by_carrier_day$UniqueCarrier[by_carrier_day$UniqueCarrier=="WN"] = "Southwest"
+
+ggplot(by_carrier_day, aes(fill=UniqueCarrier, y=small_delay, 
+                           x=as.factor(DayOfWeek))) + 
+  geom_bar(position="dodge", stat="identity") + ylab(">5min Departure Delay") +
+  ylim(0,.4) + ggtitle("AUS Departure Delays") +
+  scale_x_discrete(name = NULL,labels= 
+                     c("Mon","Tue","Wed","Thur","Fri","Sat","Sun"))
+
+ggplot(by_carrier_day, aes(fill=UniqueCarrier, y=big_delay, 
+                             x=as.factor(DayOfWeek))) + 
+  geom_bar(position="dodge", stat="identity") + ylab(">30min Departure Delay") +
+  ylim(0,.4) + ggtitle("AUS Large Departure Delays") +
+  scale_x_discrete(name = NULL,labels= 
+                     c("Mon","Tue","Wed","Thur","Fri","Sat","Sun"))
+```
+
+In the plots above, we can see the average daily proportion of flights departing from Austin which had departure delays. On the left we count relatively minor delays (anything over 5min). And on the right we only count more significant delays of 30min or more (potentially connection wrecking). The figures focus on the most prominent airlines operating out of the Austin airport in 2008 (i.e., those with the most departing flights). As we might expect, delays become more prevalent during times of high traffic weekend travel with Fridays having the highest rate of departure delays for all three airlines. Also of note, Southwest Airlines has a much higher departure delay rate when compared with the others in our chart on the left. But when compared on the basis of more significant delays, they are more closely in line with their competitors. More analysis would be needed to determine if this is in any way related to their practice of boarding flights with no pre-assigned seats.
+
+## 2) Wrangling the Billboard Top 100
+
+#### Part A
+
+Utilizing weekly Billboard Top 100 data since 1958 (through week 22 of 2021), we seek to determine the 10 most "popular" songs. For this exercise, popularity is measured by the total number of weeks a song spent on the Billboard Top 100.
+
+```{r echo = FALSE, results = 'asis'}
+Part_A = BBTOP100 %>% 
+  group_by(performer, song) %>% 
+  summarize(count = n())
+
+Part_A = Part_A[order(-Part_A$count),]
+Part_A = head(Part_A,10)
+
+kable(Part_A, caption = 'The table above displays the 10 songs that spent the greatest number of weeks on the Billboard Top 100 since 1958.')
+```
+
+#### Part B
+
+Making use of the same weekly Billboard Top 100 data, we want to determine if "musical diversity" is changing over time. To do this, we will measure the number of unique songs present on the Billboard Top 100 for at least one week in a given year. Note that 1958 and 2021 are incomplete years in this dataset, so each of those years are excluded in this analysis.  
+
+```{r musical-diversity, echo = FALSE}
+Part_B = BBTOP100 %>% filter(year != 1958,year != 2021)
+
+Part_B = Part_B %>% 
+  group_by(performer, song, year) %>% 
+  summarize(count = n())
+
+Part_B = Part_B %>% 
+  group_by(year) %>% 
+  summarize(count = n())
+
+ggplot(Part_B, aes(x=year, y=count, group=1)) +
+  geom_line() +
+  geom_point() + ggtitle("Unique Billboard Top 100 Songs") +
+  ylab("Number of Unique Songs") + xlab("Year")
+```
+
+The chart above indicates that musical diversity varies significantly over time. Musical diversity experienced a prolonged downtrend until reaching a low point around the turn of the century. In recent years, musical diversity has increased substantially and has returned to levels not seen since the 1960's.  
+
+#### Part C
+
+```{r ten-week-hits, echo = FALSE}
+Part_C = BBTOP100 %>% 
+  group_by(performer, song) %>% 
+  summarize(count = n())
+
+Part_C = Part_C %>% filter(count > 9)
+
+Part_C = Part_C %>% 
+  group_by(performer) %>% 
+  summarize(count = n())
+
+Part_C = Part_C %>% filter(count > 29)
+Part_C = Part_C[order(-Part_C$count),]
+
+Part_C %>% 
+  ggplot(aes(fct_reorder(performer, count), count)) +
+  geom_col() + coord_flip() +
+  ggtitle(label = "Ten-week Hits by Artist", 
+          subtitle = "US artists with at least 30 ten-week hits") +
+  ylab("Number of Ten-week Hits") + xlab("Artist")
+```
+
+The bar plot above shows all US artists with at least 30 "ten-week hits." A ten-week hit is defined as a song that appeared on the Billboard Top 100 for at least 10 weeks. 
+
+## 3) Wrangling the Olympics
+
+#### Part A
+
+This section works with Olympics data which contains information on every medalist in the top 20 sports by participant count. In order to determine the 95th percentile of height for female competitors across all track and field events, we filter the Olympic medalists for sex = F and sport = Athletics (as shown in the code below).
+
+
+```{r}
+Part_A = OLYMPICS %>% filter(sport == 'Athletics', sex == 'F')
+
+quantile(Part_A$height, .95)
+```
+
+As shown above, the 95th percentile for height of female competitors across all track and field events is 183 cm.
+
+#### Part B
+
+Utilizing the same Olympic medalist data, we seek to determine the single women's event with the greatest variability in height (as measured by standard deviation amongst the competitors).
+
+```{r echo = FALSE, results = 'asis'}
+Part_B = OLYMPICS %>% filter(sex == 'F')
+
+female_events = Part_B %>% 
+  group_by(event) %>% 
+  summarize(count = n(),
+            sd_height = sd(height))
+
+female_events = female_events[order(-female_events$sd_height),]
+
+kable(head(female_events,10), caption = "The table above displays the 10 female events with the greatest variability in heights across the history of the Olympics. We find Rowing Women’s Coxed Fours to have the greatest variability in heights. The 63 medalists have a standard deviation in heights of almost 10.9 cm")
+```
+
+#### Part C
+
+```{r avg-swim-age, echo = FALSE}
+Part_C = OLYMPICS %>% filter(sport == 'Swimming')
+
+swim_heights = Part_C %>% 
+  group_by(year,sex) %>% 
+  summarize(count = n(),
+            mean_age = mean(age))
+
+ggplot(swim_heights, aes(x=year, color = sex, na.rm = TRUE)) + 
+  geom_line(aes(y = mean_age)) + 
+  geom_point(aes(y = mean_age)) +
+  labs(y = "Mean Medalist Age", x = "Year") +
+  ggtitle("Olympic Swimmer Age Over Time")
+```
+
+In the figure above, we find that the average age of Olympic swimmers has been rising since the 1980's. Additionally, the average ages of male and female swimmers seems to differ in multiple regards. Swimming medalist men have tended to be older than their female counterparts and, while the average age for men continues to trend upward, the average female swimmer age has platued at around 22 since the year 2000.
+
+## 4) K-nearest neighbors
+
+In this exercise, we seek to construct a simple predictive price model for two trim levels of Mercedes S Class vehicles utilizing a K-nearest neighbors framework. We will use one train/test split (80%/20%) for each trim category. We will first compare across a wide variety of choices in K and, then taking the K in each case with lowest RMSE, will construct a plot of the predicted prices (based on vehicle mileage) alongside the original data.
+
+```{r rmse-vs-k, echo = FALSE, fig.show="hold", out.width="50%"}
+SCLASS_350 = SCLASS %>% filter(trim == 350)
+SCLASS_65AMG = SCLASS %>% filter(trim == '65 AMG')
+
+#350
+SCLASS_350_split =  initial_split(SCLASS_350, prop=0.8)
+SCLASS_350_train = training(SCLASS_350_split)
+SCLASS_350_test  = testing(SCLASS_350_split)
+
+k_values = c(2, 4, 6, 8, 10, 15, 20, 25, 30, 35, 40, 45,
+           50, 60, 70, 80, 90, 100)
+res_350 <- data.frame(k=rep(NA,length(k_values)), rmse=rep(NA,length(k_values)))
+for (i in 1:length(k_values)){
+  knn = knnreg(price ~ mileage, data=SCLASS_350_train, k=k_values[i])
+  res_350[i,1] = k_values[i]
+  res_350[i,2] = rmse(knn, SCLASS_350_test)
+}
+
+ggplot(res_350, aes(x=k)) + 
+  geom_line(aes(y = rmse)) + 
+  geom_point(aes(y = rmse)) +
+  labs(y = "RMSE", x = "K") +
+  ggtitle("350 Trim - RMSE vs K")
+
+#65 AMG
+SCLASS_65AMG_split =  initial_split(SCLASS_65AMG, prop=0.8)
+SCLASS_65AMG_train = training(SCLASS_65AMG_split)
+SCLASS_65AMG_test  = testing(SCLASS_65AMG_split)
+
+res_65AMG <- data.frame(k=rep(NA,length(k_values)), rmse=rep(NA,length(k_values)))
+for (i in 1:length(k_values)){
+  knn = knnreg(price ~ mileage, data=SCLASS_65AMG_train, k=k_values[i])
+  res_65AMG[i,1] = k_values[i]
+  res_65AMG[i,2] = rmse(knn, SCLASS_65AMG_test)
+}
+
+ggplot(res_65AMG, aes(x=k)) + 
+  geom_line(aes(y = rmse)) + 
+  geom_point(aes(y = rmse)) +
+  labs(y = "RMSE", x = "K") +
+  ggtitle("65 AMG Trim - RMSE vs K")
+```
+
+The above plots display resulting RMSE for K-nearest neighbor models utilizing K of 2, 4, 6, 8, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, and 100. The relatively significant curvature of each plot suggests there is a definite window for appropriate choices of K. For reference, the minimum RMSE for each trim under consideration is displayed below.
+
+
+```{r fitted-model, echo = FALSE, fig.show="hold", out.width="50%"}
+# 350
+k_350 = res_350[which(res_350[2] == min(res_350[2])),1]
+knn = knnreg(price ~ mileage, data=SCLASS_350_train, k=k_350)
+rmse(knn, SCLASS_350_test)
+
+SCLASS_350_test = SCLASS_350_test %>%
+  mutate(price_pred = predict(knn, SCLASS_350_test))
+
+ggplot(data = SCLASS_350_test) + 
+  geom_point(mapping = aes(x = mileage, y = price), alpha=0.2)  +    geom_line(aes(x = mileage, y = price_pred), color='red', size=1.5) + labs(y = "Price", title = sprintf("350 Trim K-nearest Neighbors where K = %d", k_350)) + scale_x_continuous(name="Mileage", labels = scales::comma)
+
+# 65 AMG
+k_65AMG = res_65AMG[which(res_65AMG[2] == min(res_65AMG[2])),1]
+knn = knnreg(price ~ mileage, data=SCLASS_65AMG_train, k=k_65AMG)
+rmse(knn, SCLASS_65AMG_test)
+
+SCLASS_65AMG_test = SCLASS_65AMG_test %>%
+  mutate(price_pred = predict(knn, SCLASS_65AMG_test))
+
+ggplot(data = SCLASS_65AMG_test) + 
+  geom_point(mapping = aes(x = mileage, y = price), alpha=0.2)  + geom_line(aes(x = mileage, y = price_pred), color='red', size=1.5) + labs(y = "Price", title = sprintf("65 AMG Trim K-nearest Neighbors where K = %d", k_65AMG)) + scale_x_continuous(name="Mileage", labels = scales::comma)
+```
+
+The above plots display the K-nearest neighbors model fits (red line) along with the underlying data for each trim under consideration. We can see in each case that the models do a reasonably good job of fitting actual values. Given that we are performing this analysis on a single train/test split, there is inherent randomness in the exact values of K which minimize RMSE for each trim considered. Since the 350 trim data contains relatively more observations, we might expect it to have a larger optimal K for minimizing RMSE. 
