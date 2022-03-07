@@ -4,6 +4,9 @@ library(modelr)
 library(glmnet)
 library(lubridate)
 library(ROCR)
+library(mosaic)
+library(caret)
+library(foreach)
 
 ###
 ### Problem 1 ###
@@ -24,6 +27,36 @@ ggplot(capmetro) + geom_point(aes(x = temperature, y = boarding, color = weekend
 ###
 ### Problem 2 ###
 ###
+data(SaratogaHouses)
+
+saratoga_split = initial_split(SaratogaHouses, prop = 0.8)
+saratoga_train = training(saratoga_split)
+saratoga_test = testing(saratoga_split)
+
+lm_start = lm(price ~ lotSize + landValue + age + livingArea + pctCollege + bedrooms + bathrooms + fuel + centralAir + waterfront + newConstruction, data = saratoga_train)
+
+lm_step = step(lm_start, scope = ~(.)^2)
+
+#rmse(lm_step, saratoga_test)
+SH_lm_folds = crossv_mc(SaratogaHouses, n = 20, test = 0.2)
+
+mean_lm_rmse <- map(SH_lm_folds$train, ~ lm(lm_step$terms, data = .)) %>% 
+  map2_dbl(SH_lm_folds$test, modelr::rmse) %>% mean()
+
+SaratogaHouses <- SaratogaHouses %>% mutate(across(lotSize:rooms, scale))
+
+SH_knn_folds = crossv_mc(SaratogaHouses, n = 20, test = 0.2)
+
+k_grid <- c(seq(3, 29, by = 2))
+
+my_knn_grid <- foreach(k = k_grid, .combine = rbind) %do% {
+  mean_knn_rmse <- map(SH_knn_folds$train, ~ knnreg(price ~ . - fireplaces - rooms - heating - sewer, k = k, data = .)) %>% 
+    map2_dbl(SH_knn_folds$test, modelr::rmse) %>% mean()
+  c(k = k, rmse = mean_knn_rmse)
+} %>% as.data.frame %>% arrange(rmse)
+
+best_knn <- my_knn_grid[1,]
+
 
 
 ###
